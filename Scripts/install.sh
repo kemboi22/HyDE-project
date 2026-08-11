@@ -71,52 +71,52 @@ theme_install=1
 
 while [[ $# -gt 0 ]]; do
 	case $1 in
-		-i|--install)
-			operations+=("install")
-			shift
-			;;
-		-d|--defaults)
-			operations+=("install")
-			export use_default="--noconfirm"
-			shift
-			;;
-		-r|--restore)
-			operations+=("restore")
-			shift
-			;;
-		-s|--services)
-			operations+=("services")
-			shift
-			;;
-		-p|--pre)
-			operations+=("pre")
-			shift
-			;;
-		-n|--no-nvidia)
-			nvidia=0
-			print_log -r "[nvidia] " -b "Ignored :: " "skipping Nvidia actions"
-			shift
-			;;
-		-h|--shell)
-			export flg_Shell=1
-			print_log -r "[shell] " -b "Reevaluate :: " "shell options"
-			shift
-			;;
-		-m|--no-theme)
-			theme_install=0
-			shift
-			;;
-		-t|--test)
-			dry_run=1
-			shift
-			;;
-		--help)
-			show_help
-			;;
-		*)
-			echo "Unknown option: $1"
-			show_help
-			;;
+	-i | --install)
+		operations+=("install")
+		shift
+		;;
+	-d | --defaults)
+		operations+=("install")
+		export use_default="--noconfirm"
+		shift
+		;;
+	-r | --restore)
+		operations+=("restore")
+		shift
+		;;
+	-s | --services)
+		operations+=("services")
+		shift
+		;;
+	-p | --pre)
+		operations+=("pre")
+		shift
+		;;
+	-n | --no-nvidia)
+		nvidia=0
+		print_log -r "[nvidia] " -b "Ignored :: " "skipping Nvidia actions"
+		shift
+		;;
+	-h | --shell)
+		export flg_Shell=1
+		print_log -r "[shell] " -b "Reevaluate :: " "shell options"
+		shift
+		;;
+	-m | --no-theme)
+		theme_install=0
+		shift
+		;;
+	-t | --test)
+		dry_run=1
+		shift
+		;;
+	--help)
+		show_help
+		;;
+	*)
+		echo "Unknown option: $1"
+		show_help
+		;;
 	esac
 done
 
@@ -159,8 +159,18 @@ EOF
 	exit 0
 fi
 
+# Both branches below run out of the Python environment, and the revisions they
+# run are the ones this checkout's lock pins. Without this step a restore
+# deploys with whatever was installed last time, so a corrected pin never
+# arrives. It has to happen here, above the first use of deez: the dependency
+# checks reach it before the deployment does. The pre-install script covers it
+# for a combined run; on its own each operation gets the environment alone,
+# since the rest of that script rewrites the bootloader and pacman
+# configuration and has no business running on a restore.
 if has_operation "install" && has_operation "restore"; then
-	"${scrDir}/install_pre.sh"
+	"${scrDir}/install_pre.sh" || exit 1
+elif has_operation "install" || has_operation "restore"; then
+	setup_python_env || exit 1
 fi
 
 #------------#
@@ -177,40 +187,14 @@ if has_operation "install"; then
 
 EOF
 
-	#----------------------#
-	# prepare package list #
-	#----------------------#
-	custom_pkg=$1
-	cp "${scrDir}/pkg_core.lst" "${scrDir}/install_pkg.lst"
-	trap 'mv "${scrDir}/install_pkg.lst" "${cacheDir}/logs/${HYDE_LOG}/install_pkg.lst"' EXIT
-
-	echo -e "\n#user packages" >>"${scrDir}/install_pkg.lst" # Add a marker for user packages
-	if [ -f "${custom_pkg}" ] && [ -n "${custom_pkg}" ]; then
-		cat "${custom_pkg}" >>"${scrDir}/install_pkg.lst"
-	fi
-
-	#--------------------------------#
-	# add nvidia drivers to the list #
-	#--------------------------------#
-	if nvidia_detect; then
-		if [ ${flg_Nvidia} -eq 1 ]; then
-			cat /usr/lib/modules/*/pkgbase | while read -r kernel; do
-				echo "${kernel}-headers" >>"${scrDir}/install_pkg.lst"
-			done
-			nvidia_detect --drivers >>"${scrDir}/install_pkg.lst"
-		else
-			print_log -warn "Nvidia" "Nvidia GPU detected but ignored..."
-		fi
-	fi
-	nvidia_detect --verbose
-
 	#----------------#
 	# get user prefs #
 	#----------------#
 	echo ""
+
 	if ! chk_list "aurhlpr" "${aurList[@]}"; then
 		print_log -c "\nAUR Helpers :: "
-		aurList+=("yay-bin" "paru-bin") # Add this here instead of in global_fn.sh
+		aurList+=("yay-bin" "paru-bin")
 		for i in "${!aurList[@]}"; do
 			print_log -sec "$((i + 1))" " ${aurList[$i]} "
 		done
@@ -238,45 +222,85 @@ EOF
 		fi
 	fi
 
-	# if ! chk_list "myShell" "${shlList[@]}"; then
-	# 	print_log -c "Shell :: "
-	# 	for i in "${!shlList[@]}"; do
-	# 		print_log -sec "$((i + 1))" " ${shlList[$i]} "
-	# 	done
-	# 	prompt_timer 120 "Enter option number [default: zsh] | q to quit "
+	# Only an explicit choice counts; an installed package is not an answer.
+	if ! chk_shell "${myShell:-}"; then
+		print_log -c "Shell :: "
+		for i in "${!shlList[@]}"; do
+			print_log -sec "$((i + 1))" " ${shlList[$i]} "
+		done
+		prompt_timer 120 "Enter option number [default: zsh] | q to quit "
 
-	# 	case "${PROMPT_INPUT}" in
-	# 	1) export myShell="zsh" ;;
-	# 	2) export myShell="fish" ;;
-	# 	q)
-	# 		print_log -sec "shell" -crit "Quit" "Exiting..."
-	# 		exit 1
-	# 		;;
-	# 	*)
-	# 		print_log -sec "shell" -warn "Defaulting to zsh"
-	# 		export myShell="zsh"
-	# 		;;
-	# 	esac
-	# 	print_log -sec "shell" -stat "Added as shell" "${myShell}"
-	# 	echo "${myShell}" >>"${scrDir}/install_pkg.lst"
-
-	# 	if [[ -z "$myShell" ]]; then
-	# 		print_log -sec "shell" -crit "No shell found..." "Log file at ${cacheDir}/logs/${HYDE_LOG}"
-	# 		exit 1
-	# 	else
-	# 		print_log -sec "shell" -stat "detected :: " "${myShell}"
-	# 	fi
-	# fi
-
-	if ! grep -q "^#user packages" "${scrDir}/install_pkg.lst"; then
-		print_log -sec "pkg" -crit "No user packages found..." "Log file at ${cacheDir}/logs/${HYDE_LOG}/install.sh"
-		exit 1
+		case "${PROMPT_INPUT}" in
+		1) export myShell="zsh" ;;
+		2) export myShell="fish" ;;
+		q)
+			print_log -sec "shell" -crit "Quit" "Exiting..."
+			exit 1
+			;;
+		*)
+			print_log -sec "shell" -warn "Defaulting to zsh"
+			export myShell="zsh"
+			;;
+		esac
+		print_log -sec "shell" -stat "detected" "${myShell}"
 	fi
 
+	#------------------------------------#
+	# install AUR helper via pacman first #
+	#------------------------------------#
+	"${scrDir}/install_aur.sh" "${getAur}" 2>&1
+
+	deez_exe="${HOME}/.local/state/hyde/python_env/bin/deez"
+
+	#------------------------------------------#
+	# build transient TOML: core deps + nvidia  #
+	#------------------------------------------#
+	core_toml="$(mktemp --suffix=-core.toml)"
+	trap 'rm -f "${core_toml}"' RETURN EXIT
+
+	cat > "${core_toml}" <<-TOML
+		# Auto-generated by install.sh — core deps
+		# The include has to sit inside [global]; deez reads it from there and
+		# ignores a root-level one, which leaves the group unloaded and the
+		# dependency step with nothing to install.
+		[global]
+		include = [
+		    "${scrDir}/dots-groups/core.toml",
+		]
+
+		[[global.dependency]]
+		pacman = [
+	TOML
+
+# TODO: This is arch specific; A separate install script should be written
+	if nvidia_detect; then
+		if [ "${flg_Nvidia}" -eq 1 ]; then
+			cat /usr/lib/modules/*/pkgbase 2>/dev/null | while read -r kernel; do
+				echo "\"${kernel}-headers\","
+			done >> "${core_toml}"
+			nvidia_detect --drivers | while read -r pkg; do
+				[ -n "${pkg}" ] && echo "\"${pkg}\","
+			done >> "${core_toml}"
+		else
+			print_log -warn "Nvidia" "Nvidia GPU detected but ignored..."
+		fi
+	fi
+	nvidia_detect --verbose
+	echo "]" >> "${core_toml}"
+
 	#--------------------------------#
-	# install packages from the list #
+	# install core deps (+ nvidia)   #
 	#--------------------------------#
-	"${scrDir}/install_pkg.sh" "${scrDir}/install_pkg.lst"
+	if [ "${flg_DryRun}" -eq 1 ]; then
+		print_log -y "[CORE] " -b "dry-run :: " "Would install core packages"
+	else
+		print_log -g "[CORE] " -b "install :: " "Core system packages..."
+		"${deez_exe}" deps --install --config "${core_toml}" --source "${cloneDir}" || {
+			print_log -err "[CORE] " -crit "ERROR" "Core package installation failed"
+			exit 1
+		}
+		print_log -g "[CORE] " -b "complete :: " "Core packages installed"
+	fi
 fi
 
 #---------------------------#
@@ -292,6 +316,107 @@ if has_operation "restore"; then
                               |___|
 
 EOF
+
+	deez_exe="${HOME}/.local/state/hyde/python_env/bin/deez"
+	deploy_failed=0
+
+	#------------------------------------------#
+	# rebuild transient TOML: core deps+nvidia  #
+	#------------------------------------------#
+	core_toml="$(mktemp --suffix=-core.toml)"
+	trap 'rm -f "${core_toml}"' RETURN EXIT
+
+	cat > "${core_toml}" <<-TOML
+		[global]
+		include = [
+		    "${scrDir}/dots-groups/core.toml",
+		]
+
+		[[global.dependency]]
+		pacman = [
+	TOML
+	if nvidia_detect && [ "${flg_Nvidia}" -eq 1 ]; then
+		cat /usr/lib/modules/*/pkgbase 2>/dev/null | while read -r kernel; do
+			echo "\"${kernel}-headers\","
+		done >> "${core_toml}"
+		nvidia_detect --drivers | while read -r pkg; do
+			[ -n "${pkg}" ] && echo "\"${pkg}\","
+		done >> "${core_toml}"
+	fi
+	echo "]" >> "${core_toml}"
+
+	#------------------------------------------#
+	# rebuild transient TOML: extra deps+shell  #
+	#------------------------------------------#
+	extra_toml="$(mktemp --suffix=-extra.toml)"
+	trap 'rm -f "${extra_toml}"' RETURN EXIT
+
+	cat > "${extra_toml}" <<-TOML
+		[global]
+		include = [
+		    "${scrDir}/dots-groups/extra.toml",
+		]
+
+		[[global.dependency]]
+		pacman = [
+	TOML
+	# starship is needed for both zsh and fish prompts
+	echo "\"starship\"," >> "${extra_toml}"
+	echo "]" >> "${extra_toml}"
+
+	#-------------------------------#
+	# re-check / install core deps  #
+	#-------------------------------#
+	if [ "${flg_DryRun}" -eq 1 ]; then
+		print_log -y "[CORE] " -b "dry-run :: " "Would re-check core deps"
+	else
+		print_log -g "[CORE] " -b "verify :: " "Verifying core packages..."
+		"${deez_exe}" deps --install --config "${core_toml}" --source "${cloneDir}" || {
+			print_log -err "[CORE] " -crit "ERROR" "Core package verification failed"
+			exit 1
+		}
+	fi
+
+	#-------------------------------#
+	# re-check / install extra deps #
+	#-------------------------------#
+	if [ "${flg_DryRun}" -eq 1 ]; then
+		print_log -y "[EXTRA] " -b "dry-run :: " "Would re-check extra deps"
+	else
+		print_log -g "[EXTRA] " -b "verify :: " "Verifying extra packages..."
+		"${deez_exe}" deps --install --config "${extra_toml}" --source "${cloneDir}" || {
+			print_log -err "[EXTRA] " -crit "ERROR" "Extra package verification failed"
+			exit 1
+		}
+		print_log -g "[DEPS] " -b "verify :: " "All packages verified"
+	fi
+
+	#-------------------------------#
+	# install the chosen shell only #
+	#-------------------------------#
+	# A restore of its own is never asked, so it keeps the current shell.
+	resolve_shell || true
+	if [ "${flg_DryRun}" -eq 1 ]; then
+		print_log -y "[SHELL] " -b "dry-run :: " "Would install ${myShell:-the chosen shell}"
+	elif chk_shell "${myShell:-}"; then
+		print_log -g "[SHELL] " -b "install :: " "${myShell}..."
+		"${deez_exe}" deps --install --config "${scrDir}/dots-groups/shell.toml" \
+			--source "${cloneDir}" --dots "${myShell}" || {
+			print_log -err "[SHELL] " -crit "ERROR" "${myShell} installation failed"
+			exit 1
+		}
+	fi
+
+	# Lua environment setup
+	if [ "${flg_DryRun}" -eq 1 ]; then
+		print_log -y "[LUA] " -b "dry-run :: " "Would setup Lua environment"
+	else
+		if ! python3 "${cloneDir}/Configs/.local/lib/hyde/pyutils/lua_env.py" create; then
+			print_log -err "[LUA] " -crit "ERROR" "Failed to create Lua environment"
+			exit 1
+		fi
+		print_log -g "[LUA] " -b "complete :: " "Environment setup complete"
+	fi
 
 	if [ "${flg_DryRun}" -ne 1 ] && [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ]; then
 		hyprctl keyword misc:disable_autoreload 1 -q
@@ -310,13 +435,34 @@ EOF
 			exit 1
 		}
 
+		# A failed deployment used to end the run here, which cost the user
+		# every step below it — the theme, the wallpaper cache, the migrations,
+		# the services. Those are what bring a partly deployed tree back into
+		# shape, so they are exactly what should still run. The failure is
+		# carried to the end of the restore and reported there.
 		print_log -g "[DEEZ-DOTS] " -b "deploy :: " "Installing core dotfiles..."
-		"${deez_exe}" --source "${cloneDir}" --config "${scrDir}/dots-groups/core.toml" dots --skip-git --deploy all || exit 1
+		"${deez_exe}" --source "${cloneDir}" --config "${scrDir}/dots-groups/core.toml" dots --skip-git --deploy all || {
+			print_log -err "[DEEZ-DOTS] " -crit "ERROR" "Core dotfiles deployed with failures"
+			deploy_failed=1
+		}
 
 		print_log -g "[DEEZ-DOTS] " -b "deploy :: " "Installing extra dotfiles..."
-		"${deez_exe}" --source "${cloneDir}" --config "${scrDir}/dots-groups/extra.toml" dots --skip-git --deploy || exit 1
+		"${deez_exe}" --source "${cloneDir}" --config "${scrDir}/dots-groups/extra.toml" dots --skip-git --deploy || {
+			print_log -err "[DEEZ-DOTS] " -crit "ERROR" "Extra dotfiles deployed with failures"
+			deploy_failed=1
+		}
 
-		print_log -g "[DEEZ-DOTS] " -b "complete :: " "Dotfiles deployed"
+		if chk_shell "${myShell:-}"; then
+			print_log -g "[DEEZ-DOTS] " -b "deploy :: " "Installing ${myShell} dotfiles..."
+			"${deez_exe}" --source "${cloneDir}" --config "${scrDir}/dots-groups/shell.toml" dots --skip-git --deploy "${myShell}" || {
+				print_log -err "[DEEZ-DOTS] " -crit "ERROR" "${myShell} dotfiles deployed with failures"
+				deploy_failed=1
+			}
+		fi
+
+		if [ "${deploy_failed}" -eq 0 ]; then
+			print_log -g "[DEEZ-DOTS] " -b "complete :: " "Dotfiles deployed"
+		fi
 	fi
 
 	"${scrDir}/restore_thm.sh"
@@ -362,16 +508,9 @@ if has_operation "restore"; then
 
 	echo "Running migrations from: ${migrationDir}"
 
-	if [ -d "${migrationDir}" ] && find "${migrationDir}" -type f | grep -q .; then
-		migrationFile=$(find "${migrationDir}" -maxdepth 1 -type f -printf '%f\n' | sort -r | head -n 1)
+	migrationStateFile="${XDG_STATE_HOME:-${HOME}/.local/state}/hyde/migration/applied"
 
-		if [[ -n "${migrationFile}" && -f "${migrationDir}/${migrationFile}" ]]; then
-			echo "Found migration file: ${migrationFile}"
-			sh "${migrationDir}/${migrationFile}" || { true && print_log -warn "Migration" "Failed to execute ${migrationFile}"; }
-		else
-			echo "No migration file found in ${migrationDir}. Skipping migrations."
-		fi
-	fi
+	run_pending_migrations "${migrationDir}" "${migrationStateFile}"
 
 fi
 
@@ -389,6 +528,14 @@ if has_operation "services"; then
 EOF
 
 	"${scrDir}/restore_svc.sh"
+fi
+
+# Reported here rather than where it happened, so the theme, the migrations and
+# the services above still run against the dots that did land.
+if [ "${deploy_failed:-0}" -ne 0 ]; then
+	print_log -err "[DEEZ-DOTS] " -crit "ERROR" "Some dots were not deployed. Deal with the failures reported above and run the restore again."
+	print_log -b "Log" " :: " -y "View logs at ${cacheDir}/logs/${HYDE_LOG}"
+	exit 1
 fi
 
 if has_operation "install"; then

@@ -4,16 +4,16 @@ pre_command = "echo 'Pre commands '"
 post_command = "echo 'HyDE backed up!'"
 
 [[waybar.dependency]]
+pacman = ["waybar"]
 yay = ["waybar"]
 paru = ["waybar"]
-pacman = ["waybar"]
 dnf = ["waybar"]
 
 [[waybar.files]]
 action = "preserve"
 source_root = "Configs/.config/waybar"
 target_root = "${XDG_CONFIG_HOME}/waybar"
-paths = ["config.jsonc", "theme.css", "style.css"]
+paths = ["config.jsonc", "theme.css", "style.css", "user-style.css"]
 
 # [[waybar.files]]
 # action = "preserve"
@@ -25,4 +25,4 @@ paths = ["config.jsonc", "theme.css", "style.css"]
 action = "sync"
 source_root = "Configs/.local/share/waybar"
 target_root = "${XDG_DATA_HOME}/waybar"
-paths = ["includes", "scripts", "modules", "styles", "layouts", "menus"]
+paths = ["includes", "modules", "styles", "layouts", "menus"]

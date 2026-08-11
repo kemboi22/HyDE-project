@@ -294,10 +294,10 @@ run_command() {
         [[ -d "$dir" ]] && SCRIPT_DIRS+=("$dir")
     done
 
+    # Lua is resolved before shell, so a script left behind by an older release
+    # cannot shadow the implementation that replaced it.
     for dir in "${SCRIPT_DIRS[@]}"; do
-        if [[ -f "$dir/${1}.sh" ]]; then
-            exec bash "$dir/${1}.sh" "${@:2}"
-        elif [[ -f "$dir/${1}.lua" ]]; then
+        if [[ -f "$dir/${1}.lua" ]]; then
             l_env="${XDG_STATE_HOME:-$HOME/.local/state}/hyde/lua_env"
             if [[ ! -d "$l_env" ]]; then
                 print_log -warn "Lua environment not found!" " Please run 'hyde-shell luainit' to set up the environment."
@@ -315,6 +315,8 @@ run_command() {
             export LUA_PATH="$l_env/share/lua/$lua_ver/?.lua;$l_env/share/lua/$lua_ver/?/init.lua;$LUA_PATH"
             export LUA_CPATH="$l_env/lib/lua/$lua_ver/?.so;$LUA_CPATH"
             exec lua "$dir/${1}.lua" "${@:2}"
+        elif [[ -f "$dir/${1}.sh" ]]; then
+            exec bash "$dir/${1}.sh" "${@:2}"
         elif [[ -f "$dir/${1}.py" ]]; then
             exec "${XDG_STATE_HOME:-$HOME/.local/state}/hyde/python_env/bin/python" "$dir/${1}.py" "${@:2}"
         elif [[ -f "$dir/${1}" && -x "$dir/${1}" ]]; then
@@ -375,11 +377,12 @@ run_pypr() {
         fi
 
         if [[ -S "$socket_path" ]] && pgrep -u "$USER" pypr >/dev/null 2>&1; then
-            message="${*:-"help"}"
-            if ! printf "%s" "${message[@]}" | nc -N -U "$socket_path" 2>/dev/null; then
-                if ! printf "%s" "${message[@]}" | socat - UNIX-CONNECT:"$socket_path" 2>/dev/null; then
-                    if ! printf "%s" "${message[@]}" | ncat -U "$socket_path" 2>/dev/null; then
-                        if ! pypr "${message[@]}"; then
+            local -a msg=("$@")
+            ((${#msg[@]} == 0)) && msg=("help")
+            if ! printf '%s\n' "${msg[*]}" | nc -N -U "$socket_path" 2>/dev/null; then
+                if ! printf '%s\n' "${msg[*]}" | socat - UNIX-CONNECT:"$socket_path" 2>/dev/null; then
+                    if ! printf '%s\n' "${msg[*]}" | ncat -U "$socket_path" 2>/dev/null; then
+                        if ! pypr "${msg[@]}"; then
                             print_log -sec "pypr" "Error communicating with socket: $socket_path"
                             exit 1
                         fi
